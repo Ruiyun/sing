@@ -3,12 +3,7 @@
   (:refer-clojure :exclude [replace])
   (:require [clojure.string :refer [upper-case lower-case replace join]])
   (:import [java.util Properties]
-           [javax.sip SipFactory SipStack SipProvider SipListener ListeningPoint]
-           [javax.sip.address AddressFactory]
-           [javax.sip.message MessageFactory Request Response]
-           [javax.sip.header HeaderFactory ContentTypeHeader]
-           [gov.nist.javax.sip.message SIPRequest]
-           [gov.nist.javax.sip.header SIPHeader]))
+           [javax.sip SipFactory SipStack SipProvider SipListener ListeningPoint]))
 
 (defonce ^{:private true
            :doc "The instance of JAIN-SIP's Factories."}
@@ -48,36 +43,6 @@
     (when tcp? (.addListeningPoint p (.createListeningPoint s host port ListeningPoint/TCP)))
     (when (not udp?) (.removeListeningPoint p udp))
     p))
-
-(defn- get-headers [^Request request]
-  (reduce
-   (fn [headers header-name]
-     (assoc headers
-       (-> (lower-case header-name) keyword)
-       (->> (.getHeaders request header-name)
-            enumeration-seq
-            (map #(.getValue ^SIPHeader %)) ; urgly, (memfn getValue) is more better, but fire reflection warning
-            (join ", "))))
-   {}
-   (enumeration-seq (.getHeaderNames request))))
-
-(defn build-request-map [^SIPRequest request]
-  {:local-addr          (when-let [a (.getLocalAddress request)] (.getHostAddress a))
-   :local-port          (.getLocalPort request)
-   :remote-addr         (when-let [a (.getRemoteAddress request)] (.getHostAddress a))
-   :remote-port         (.getRemotePort request)
-   :method              (.getMethod request)
-   :uri                 (.getRequestURI request)
-   :headers             (get-headers request)
-   :expires             (when-let [h (.getExpires request)] (.getExpires h))
-   :content-type        (when-let [^ContentTypeHeader h (.getHeader request ContentTypeHeader/NAME)]
-                          {:type (.getContentType h), :sub-type (.getContentSubType h)})
-   :content-length      (when-let [h (.getContentLength request)] (.getContentLength h))
-   :content-encoding    (when-let [h (.getContentEncoding request)] (.getEncoding h))
-   :content-language    (when-let [h (.getContentLanguage request)] (str (.getContentLanguage h)))
-   :content-disposition (when-let [h (.getContentDisposition request)]
-                          {:type (.getDispositionType h), :handling (.getHandling h)})
-   :content             (.getRawContent request)})
 
 (defn- proxy-handler
   [handler]
