@@ -47,7 +47,14 @@
 (defn- proxy-handler
   [handler]
   (reify SipListener
-    (processRequest [this event])))
+    (processRequest [this event])
+    (processResponse [this event])
+    (processTimeout [this event])
+    (processTransactionTerminated [this event])
+    (processDialogTerminated [this event])
+    (processIOException [this event])))
+
+(defn- send-request [request sip-provider])
 
 (defn ^SipProvider run-nist
   "Start a nist SIP stack to serve the given handler according
@@ -63,8 +70,10 @@
   (let [p (-> {:host "0.0.0.0", :port 5060, :name "sing-0.1.0", :tcp? false, :udp? true}
               (merge options)
               (dissoc :stack-name :configurator)
+              (assoc :automatic-dialog-support "OFF")
               create-provider)]
     (.addSipListener p (proxy-handler handler))
     (when-let [c (:configurator options)] (c p))
-    (.start (.getSipStack p))
-    p))
+    (.. p getSipStack start) (.start (.getSipStack p))
+    {:close #(.. p getSipStack stop)
+     :send-request #(send-request % p)}))
