@@ -13,7 +13,7 @@
        (lower-case header-name)
        (->> (.getHeaders request header-name)
             iterator-seq
-            (map #(.getValue ^SIPHeader %)) ; urgly, (memfn getValue) is more better, but fire reflection warning
+            (map (memfn getValue))
             (join ", "))))
    {}
    (iterator-seq (.getHeaderNames request))))
