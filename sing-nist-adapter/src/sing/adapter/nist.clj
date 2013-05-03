@@ -1,9 +1,11 @@
 (ns sing.adapter.nist
   "Adapter for the nist implemention of JAIN."
   (:refer-clojure :exclude [replace])
-  (:require [clojure.string :refer [upper-case lower-case replace join]])
+  (:require [clojure.string :refer [upper-case lower-case replace join]]
+            [sing.adapter.nist.core :refer :all])
   (:import [java.util Properties]
-           [javax.sip SipFactory SipStack SipProvider SipListener ListeningPoint]))
+           [javax.sip SipFactory SipStack SipProvider SipListener ListeningPoint Timeout ClientTransaction]
+           [gov.nist.javax.sip.message SIPResponse]))
 
 (defonce ^{:private true
            :doc "The instance of JAIN-SIP's Factories."}
@@ -44,17 +46,36 @@
     (when (not udp?) (.removeListeningPoint p udp))
     p))
 
+(defn- deliver-response [event response]
+  (-> (.. event getClientTransaction getApplicationData)
+      (deliver response)))
+
 (defn- proxy-handler
   [handler]
   (reify SipListener
     (processRequest [this event])
-    (processResponse [this event])
-    (processTimeout [this event])
+    (processResponse [this event]
+      (let [rsp ^SIPResponse (.getResponse event)]
+        (when (.isFinalResponse rsp)
+          (->> (build-response-map rsp)
+               (deliver-response event)))))
+    (processTimeout [this event]
+      (when-not (.isServerTransaction event)
+        (if (= (.getTimeout event) Timeout/TRANSACTION)
+          (deliver-response event :transaction-timeout)
+          (deliver-response event :retransmit-timeout))))
     (processTransactionTerminated [this event])
     (processDialogTerminated [this event])
     (processIOException [this event])))
 
-(defn- send-request [request sip-provider])
+(defn- send-request [request-map, ^SipProvider sip-provider]
+  (let [t (->> (build-nist-request request-map)
+               (.getNewClientTransaction sip-provider))
+        rsp (promise)]
+    (doto t
+      (.setApplicationData rsp)
+      (.sendRequest))
+    rsp))
 
 (defn ^SipProvider run-nist
   "Start a nist SIP stack to serve the given handler according
@@ -65,7 +86,22 @@
   :port         - the port to listen on (default to 5060)
   :name         - the name of stack (default to sing-version)
   :tcp?         - use TCP transport (default to false)
-  :udp?         - use UDP transport (default to true)"
+  :udp?         - use UDP transport (default to true)
+
+  the function return a map contains two functions.
+    :close        it take no parameter, call it to close the nist.
+    :send-request it take one request map, call it to send a sip request.
+                  A sip request map looks like
+                  {:method       :invite
+                   :uri          \"sip:bob@biloxi.com\"
+                   :via          [\"SIP/2.0/UDP pc33.atlanta.com;branch=z9hG4bKnashds8\"]
+                   :call-id      \"a84b4c76e66710\"
+                   :cseq         314159
+                   :from         \"Alice <sip:alice@atlanta.com>;tag=1928301774\"
+                   :to           \"Bob <sip:bob@biloxi.com>\"
+                   :max-forwards 70
+                   :content-type \"application/sdp\"
+                   :content      ... (Alice's SDP not shown)}"
   [handler options]
   (let [p (-> {:host "0.0.0.0", :port 5060, :name "sing-0.1.0", :tcp? false, :udp? true}
               (merge options)

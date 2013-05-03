@@ -1,5 +1,5 @@
 (ns sing.adapter.nist.core
-  (:require [clojure.string :refer [lower-case join]])
+  (:require [clojure.string :refer [lower-case upper-case join]])
   (:import [javax.sip.message MessageFactory]
            [javax.sip.header HeaderFactory]
            [gov.nist.javax.sip.message MessageFactoryImpl SIPMessage SIPRequest SIPResponse]
@@ -62,7 +62,8 @@
   message)
 
 (defn build-nist-request [{:keys [method uri call-id cseq from to via max-forwards content-type content headers]}]
-  (let [uri          (.parseUrl parser uri)
+  (let [method       (-> method name upper-case)
+        uri          (.parseUrl parser uri)
         call-id      (.createCallIdHeader header-factory call-id)
         cseq         (.createCSeqHeader header-factory cseq method)
         from         (.createHeader header-factory "From" from)
@@ -75,5 +76,8 @@
           (.createRequest message-factory uri method call-id cseq from to via max-forwards))
         (set-headers! headers))))
 
-(defn build-nist-response [response-map]
-  {:pre [(contains? response-map :status)]})
+(defn build-nist-response [nist-request {:keys [status content-type content headers]}]
+  (-> (if (and content-type content)
+        (.createResponse message-factory status nist-request (.createHeader header-factory "Content-Type" content-type) content)
+        (.createResponse message-factory status nist-request))
+      (set-headers! headers)))
