@@ -27,6 +27,7 @@
       :content-type   \"application/sdp\"
       :content-length 142
       :content        ... (Alice's SDP not shown)}
+
    A typical completed response is looks like:
      {:status         200
       :reason         \"OK\"
@@ -55,7 +56,7 @@
   (:require [clojure.string :refer [upper-case lower-case replace join]]
             [sing.adapter.nist.core :refer :all])
   (:import [java.util Properties]
-           [javax.sip SipFactory SipStack SipProvider SipListener ListeningPoint Timeout ClientTransaction]
+           [javax.sip SipFactory SipStack SipProvider SipListener ListeningPoint Timeout ClientTransaction ServerTransaction]
            [gov.nist.javax.sip.message SIPResponse]))
 
 (defonce ^{:private true
@@ -102,9 +103,15 @@
       (deliver response)))
 
 (defn- proxy-handler
-  [handler]
+  [handler, ^SipProvider sip-provider]
   (reify SipListener
-    (processRequest [this event])
+    (processRequest [this event]
+      (let [req (.getRequest event)
+            t (or (.getServerTransaction event) (.getNewServerTransaction sip-provider req))]
+        (->> (build-request-map req)
+             (handler)
+             (build-nist-response req)
+             (.sendResponse t))))
     (processResponse [this event]
       (let [rsp ^SIPResponse (.getResponse event)]
         (when (.isFinalResponse rsp)
@@ -129,8 +136,7 @@
     rsp))
 
 (defn ^SipProvider run-nist
-  "Start a nist SIP stack to serve the given handler according
-  to the supplied options:
+  "Start a nist SIP stack to serve the given handler according to the supplied options:
 
   :configurator - a function called with the SipProvider instance
   :host         - the hostname to listen on (default to 0.0.0.0)
@@ -143,6 +149,10 @@
   from peer. It will call the handler function with a completed request map. And the handler
   function must return a response map or nil if the request is an ACK. Then the response map will
   send to peer by nist.
+
+  Because the most of headers of response will copy from the request, so you just need return a
+  response map that contains :status. When necessary, you can add :content-type, :content and
+  other addition :headers to the response map.
 
   the function return a map contains two functions.
     :close        it take no parameter, call it to close the nist.
@@ -168,7 +178,7 @@
               (dissoc :stack-name :configurator)
               (assoc :automatic-dialog-support "OFF")
               create-provider)]
-    (.addSipListener p (proxy-handler handler))
+    (.addSipListener p (proxy-handler handler p))
     (when-let [c (:configurator options)] (c p))
     (.. p getSipStack start) (.start (.getSipStack p))
     {:close #(.. p getSipStack stop)
