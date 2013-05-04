@@ -74,3 +74,56 @@
               udp (.getListeningPoint p ListeningPoint/UDP)]
           (is (not (or (nil? tcp) (nil? udp)))))
         (.. p (getSipStack) (stop))))))
+
+(deftest scenario-test
+  (testing "invite with simple text"
+    (let [alice-received (atom [])
+          bob-received (atom [])
+          alice-handler (fn [{method :method :as request}]
+                          (swap! alice-received conj request)
+                          {:status 200})
+          bob-handler (fn [{method :method :as request}]
+                        (swap! bob-received conj request)
+                        (case method
+                          :invite (let [final-response (promise)]
+                                    (future
+                                      (Thread/sleep 2000)
+                                      (deliver final-response {:status 200, :content-type "application/sdp" :content "o=..."}))
+                                    {:status 180, :modify {:to-tag "a6c85cf"} :next final-response})
+                          :ack nil))
+          {alice-close :close, alice-send-request :send-request} (run-nist alice-handler {:port 5060})
+          {bob-close :close, bob-send-request :send-request} (run-nist bob-handler {:port 5070})]
+      (-> (alice-send-request {:method :invite
+                               :uri "sip:bob@127.0.0.1:5070"
+                               :from "Alice <sip:alice@127.0.0.1:5060>;tag=1928301774"
+                               :to "Bob <sip:bob@127.0.0.1:5070>"
+                               :call-id "a84b4c76e66710"
+                               :cseq 314159
+                               :max-forwards 70
+                               :headers {"contact" "<sip:alice@pc33.atlanta.com>"}
+                               :content-type "application/sdp"
+                               :content "c=..."})
+          deref
+          (as-> response
+                (are [x y] (= x y)
+                     (:status response) 180
+                     (:to response) "Bob <sip:bob@127.0.0.1:5070>;tag=a6c85cf")
+                (:next response))
+          deref
+          (as-> response
+                (are [x y] (= x y)
+                     (:status response) 200
+                     (:to response) "Bob <sip:bob@127.0.0.1:5070>;tag=a6c85cf")
+                (select-keys response [:call-id :from :to]))
+          (as-> dialog-identifier
+                (-> (merge {:method :ack
+                            :uri "sip:bob@127.0.0.1:5070"
+                            :cseq 2}
+                           dialog-identifier)
+                    alice-send-request
+                    deref
+                    (as-> response
+                          (is (= response :not-applicable))))
+                dialog-identifier)
+          (as-> dialog-identifier
+                (bob-send-request {}))))))

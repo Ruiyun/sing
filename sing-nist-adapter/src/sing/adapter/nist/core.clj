@@ -76,8 +76,14 @@
           (.createRequest message-factory uri method call-id cseq from to via max-forwards))
         (set-headers! headers))))
 
-(defn build-nist-response [nist-request {:keys [status content-type content headers]}]
+(defn- set-to-tag-if-not-present! [^SIPResponse response, tag]
+  (when-not (.hasToTag response)
+    (.setToTag response (or tag (.. (Utils/getInstance) generateTag))))
+  response)
+
+(defn build-nist-response [nist-request {:keys [status to-tag content-type content headers]}]
   (-> (if (and content-type content)
         (.createResponse message-factory status nist-request (.createHeader header-factory "Content-Type" content-type) content)
         (.createResponse message-factory status nist-request))
-      (set-headers! headers)))
+      (set-headers! headers)
+      (set-to-tag-if-not-present! to-tag)))
